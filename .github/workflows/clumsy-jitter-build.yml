@@ -1,0 +1,112 @@
+name: Build clumsy-jitter (Windows)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Release ${{ matrix.platform }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x64
+            dependency_arch: x64
+            driver: WinDivert64.sys
+          - platform: x32
+            dependency_arch: x86
+            driver: WinDivert32.sys
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up MSBuild (Visual Studio 2022)
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Check required dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $required = @(
+            'genie.lua',
+            'etc/config.txt',
+            'external/WinDivert-2.2.0-A/include/WinDivert.h',
+            'external/WinDivert-2.2.0-A/${{ matrix.dependency_arch }}/WinDivert.lib',
+            'external/WinDivert-2.2.0-A/${{ matrix.dependency_arch }}/WinDivert.dll',
+            'external/WinDivert-2.2.0-A/${{ matrix.dependency_arch }}/${{ matrix.driver }}',
+            'external/iup-3.30_Win${{ matrix.platform == 'x64' && '64' || '32' }}_dll16_lib/include/iup.h',
+            'external/iup-3.30_Win${{ matrix.platform == 'x64' && '64' || '32' }}_dll16_lib/iup.dll'
+          )
+          foreach ($item in $required) {
+            if (-not (Test-Path -LiteralPath $item)) {
+              throw "Required file not found: $item"
+            }
+          }
+
+      - name: Download pinned GENie project generator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://raw.githubusercontent.com/bkaradzic/bx/51f25ba638b9cb35eb2ac078f842a4bed0746d56/tools/bin/windows/genie.exe'
+          New-Item -ItemType Directory -Force -Path tools | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile tools/genie.exe
+          if (-not (Test-Path tools/genie.exe) -or (Get-Item tools/genie.exe).Length -lt 100000) {
+            throw 'GENie download failed or was unexpectedly small.'
+          }
+
+      - name: Generate Visual Studio solution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\genie.exe vs2015
+          if ($LASTEXITCODE -ne 0) { throw "GENie failed: $LASTEXITCODE" }
+          if (-not (Test-Path build/clumsy.sln)) { throw 'GENie did not produce build/clumsy.sln' }
+
+      - name: Build optimized Release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & msbuild build/clumsy.sln /m /t:Rebuild `
+              /p:Configuration=Release `
+              /p:Platform=${{ matrix.platform }} `
+              /p:PlatformToolset=v143 `
+              /p:WindowsTargetPlatformVersion=10.0 `
+              /p:WholeProgramOptimization=true `
+              /verbosity:minimal
+          if ($LASTEXITCODE -ne 0) { throw "MSBuild failed: $LASTEXITCODE" }
+
+      - name: Package runtime files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'bin/vs/Release/${{ matrix.platform }}'
+          $name   = 'clumsy-jitter-${{ matrix.platform }}'
+          $dest   = Join-Path 'dist' $name
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $files = @('clumsy.exe', 'WinDivert.dll', '${{ matrix.driver }}', 'iup.dll', 'config.txt')
+          foreach ($file in $files) {
+            $src = Join-Path $source $file
+            if (-not (Test-Path -LiteralPath $src)) {
+              throw "Build output missing: $src"
+            }
+            Copy-Item -LiteralPath $src -Destination $dest
+          }
+          Copy-Item LICENSE (Join-Path $dest 'LICENSE.txt')
+          Copy-Item README.md $dest
+          Compress-Archive -Path (Join-Path $dest '*') -DestinationPath "dist/$name.zip" -CompressionLevel Optimal -Force
+          Get-ChildItem $dest | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: clumsy-jitter-${{ matrix.platform }}
+          path: dist/clumsy-jitter-${{ matrix.platform }}.zip
+          if-no-files-found: error
+          retention-days: 30

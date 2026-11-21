@@ -6,6 +6,7 @@
 #include "iup.h"
 #include "common.h"
 #include "parameters.h"
+#include "menu_icons.h"
 
 // ! the order decides which module get processed first
 Module* modules[MODULE_CNT] = {
@@ -275,9 +276,13 @@ void init(int argc, char* argv[]) {
     loadItem = IupItem("Load parameters ...", NULL);
     saveItem = IupItem("Save parameters ...", NULL);
     exitItem = IupItem("Exit", NULL);
-    IupSetAttribute(loadItem, "IMAGE", "CLUMSY_MENU_LOAD");
-    IupSetAttribute(saveItem, "IMAGE", "CLUMSY_MENU_SAVE");
-    IupSetAttribute(exitItem, "IMAGE", "CLUMSY_MENU_EXIT");
+    /* IUP menu items need IUP image handles, not Win32 ICON resource names. */
+    IupSetAttributeHandle(loadItem, "IMAGE",
+        IupImageRGBA(16, 16, clumsy_menu_load_rgba));
+    IupSetAttributeHandle(saveItem, "IMAGE",
+        IupImageRGBA(16, 16, clumsy_menu_save_rgba));
+    IupSetAttributeHandle(exitItem, "IMAGE",
+        IupImageRGBA(16, 16, clumsy_menu_exit_rgba));
     IupSetCallback(loadItem, "ACTION", uiLoadParametersCb);
     IupSetCallback(saveItem, "ACTION", uiSaveParametersCb);
     IupSetCallback(exitItem, "ACTION", uiExitCb);

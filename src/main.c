@@ -23,7 +23,8 @@ volatile short sendState = SEND_STATUS_NONE;
 // global iup handlers
 static Ihandle *dialog, *topFrame, *bottomFrame; 
 static Ihandle *statusLabel;
-static Ihandle *filterText, *filterButton;
+static Ihandle *filterText, *filterButton, *reapplyButton;
+static BOOL filteringActive = FALSE;
 Ihandle *filterSelectList;
 // timer to update icons
 static Ihandle *stateIcon;
@@ -34,6 +35,7 @@ void showStatus(const char *line);
 static int uiOnDialogShow(Ihandle *ih, int state);
 static int uiStopCb(Ihandle *ih);
 static int uiStartCb(Ihandle *ih);
+static int uiReapplyCb(Ihandle *ih);
 static int uiTimerCb(Ihandle *ih);
 static int uiTimeoutCb(Ihandle *ih);
 static int uiListSelectCb(Ihandle *ih, char *text, int item, int state);
@@ -143,6 +145,7 @@ void init(int argc, char* argv[]) {
             controlHbox = IupHbox(
                 stateIcon = IupLabel(NULL),
                 filterButton = IupButton("Start", NULL),
+                reapplyButton = IupButton("Re-apply", NULL),
                 IupFill(),
                 IupLabel("Presets:  "),
                 filterSelectList = IupList(NULL),
@@ -170,6 +173,10 @@ void init(int argc, char* argv[]) {
     IupSetCallback(filterText, "VALUECHANGED_CB", (Icallback)uiFilterTextCb);
     IupSetAttribute(filterButton, "PADDING", "8x");
     IupSetCallback(filterButton, "ACTION", uiStartCb);
+    IupSetAttribute(reapplyButton, "PADDING", "8x");
+    IupSetAttribute(reapplyButton, "ACTIVE", "NO");
+    IupSetAttribute(reapplyButton, "TIP", "Stop and restart packet filtering with current settings");
+    IupSetCallback(reapplyButton, "ACTION", uiReapplyCb);
     IupSetAttribute(topVbox, "NCMARGIN", "4x4");
     IupSetAttribute(topVbox, "NCGAP", "4x2");
     IupSetAttribute(controlHbox, "ALIGNMENT", "ACENTER");
@@ -361,14 +368,17 @@ static int uiStartCb(Ihandle *ih) {
     char buf[MSG_BUFSIZE];
     UNREFERENCED_PARAMETER(ih);
     if (divertStart(IupGetAttribute(filterText, "VALUE"), buf) == 0) {
+        filteringActive = FALSE;
+        IupSetAttribute(reapplyButton, "ACTIVE", "NO");
         showStatus(buf);
         return IUP_DEFAULT;
     }
 
-    // successfully started
-    showStatus("Started filtering. Enable functionalities to take effect.");
-    IupSetAttribute(filterText, "ACTIVE", "NO");
+    // successfully started: the filter remains editable, and Re-apply commits edits.
+    filteringActive = TRUE;
+    showStatus("Started filtering. Changes to the filter take effect after Re-apply.");
     IupSetAttribute(filterButton, "TITLE", "Stop");
+    IupSetAttribute(reapplyButton, "ACTIVE", "YES");
     IupSetCallback(filterButton, "ACTION", uiStopCb);
     IupSetAttribute(timer, "RUN", "YES");
 
@@ -378,11 +388,14 @@ static int uiStartCb(Ihandle *ih) {
 static int uiStopCb(Ihandle *ih) {
     int ix;
     UNREFERENCED_PARAMETER(ih);
-    
-    // try stopping
+    if (!filteringActive) return IUP_DEFAULT;
+
+    // Disable Re-apply before shutting down; never leave it active while stopped.
+    IupSetAttribute(reapplyButton, "ACTIVE", "NO");
     IupSetAttribute(filterButton, "ACTIVE", "NO");
     IupFlush(); // flush to show disabled state
     divertStop();
+    filteringActive = FALSE;
 
     IupSetAttribute(filterText, "ACTIVE", "YES");
     IupSetAttribute(filterButton, "TITLE", "Start");
@@ -399,6 +412,23 @@ static int uiStopCb(Ihandle *ih) {
     IupSetAttribute(stateIcon, "IMAGE", "none_icon");
 
     showStatus("Stopped. To begin again, edit criteria and click Start.");
+    return IUP_DEFAULT;
+}
+
+// Re-apply uses the same stop/start lifecycle as the original button.
+// It does not stop the Windows WinDivert driver service or affect other users.
+static int uiReapplyCb(Ihandle *ih) {
+    UNREFERENCED_PARAMETER(ih);
+    if (!filteringActive) return IUP_DEFAULT;
+
+    IupSetAttribute(reapplyButton, "ACTIVE", "NO");
+    uiStopCb(filterButton);
+    uiStartCb(filterButton);
+
+    if (filteringActive) {
+        showStatus("Re-applied: packet filtering restarted with current settings.");
+    }
+    // If starting failed, uiStartCb leaves Re-apply disabled and shows the error.
     return IUP_DEFAULT;
 }
 

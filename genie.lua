@@ -74,6 +74,18 @@ solution('clumsy')
             includedirs({LIB_DIVERT_VC11 .. '/include'})
             objdir('obj_vs')
 
+        -- Only the dedicated optimized workflow enables these options.
+        -- Normal builds retain their previous compiler/linker behavior.
+        if os.getenv('CLUMSY_OPTIMIZED') == '1' then
+            configuration({'Release', 'vs*'})
+                buildoptions({'/O2', '/Oi', '/Gy', '/GL'})
+                linkoptions({'/LTCG', '/OPT:REF', '/OPT:ICF'})
+            if os.getenv('CLUMSY_AVX2') == '1' then
+                configuration({'Release', 'vs*', 'x64'})
+                    buildoptions({'/arch:AVX2'})
+            end
+        end
+
         configuration({'x32', 'vs*'})
             -- defines would be passed to resource compiler for whatever reason
             -- and ONLY can be put here not under 'configuration('x32')' or it won't work

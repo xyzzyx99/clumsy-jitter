@@ -111,17 +111,31 @@ int divertStart(const char *filter, char buf[]) {
     mutex = CreateMutex(NULL, FALSE, NULL);
     if (mutex == NULL) {
         sprintf(buf, "Failed to create mutex (%lu)", GetLastError());
+        WinDivertClose(divertHandle);
+        divertHandle = INVALID_HANDLE_VALUE;
         return FALSE;
     }
 
     loopThread = CreateThread(NULL, 1, (LPTHREAD_START_ROUTINE)divertReadLoop, NULL, 0, NULL);
     if (loopThread == NULL) {
         sprintf(buf, "Failed to create recv loop thread (%lu)", GetLastError());
+        CloseHandle(mutex);
+        mutex = NULL;
+        WinDivertClose(divertHandle);
+        divertHandle = INVALID_HANDLE_VALUE;
         return FALSE;
     }
     clockThread = CreateThread(NULL, 1, (LPTHREAD_START_ROUTINE)divertClockLoop, NULL, 0, NULL);
     if (clockThread == NULL) {
         sprintf(buf, "Failed to create clock loop thread (%lu)", GetLastError());
+        // Unblock the receiving thread before releasing its resources.
+        WinDivertClose(divertHandle);
+        divertHandle = INVALID_HANDLE_VALUE;
+        WaitForSingleObject(loopThread, INFINITE);
+        CloseHandle(loopThread);
+        loopThread = NULL;
+        CloseHandle(mutex);
+        mutex = NULL;
         return FALSE;
     }
 
@@ -391,7 +405,20 @@ void divertStop() {
 
     LOG("Stopping...");
     InterlockedIncrement16(&stopLooping);
-    WaitForMultipleObjects(2, threads, TRUE, INFINITE);
+    if (WaitForMultipleObjects(2, threads, TRUE, INFINITE) != WAIT_OBJECT_0) {
+        LOG("Unable to wait for packet threads (%lu)", GetLastError());
+        ABORT();
+        return;
+    }
 
+    // Re-apply may call this repeatedly. Release thread and mutex handles
+    // after both threads have exited, or each restart leaks three handles.
+    CloseHandle(loopThread);
+    CloseHandle(clockThread);
+    CloseHandle(mutex);
+    loopThread = NULL;
+    clockThread = NULL;
+    mutex = NULL;
+    divertHandle = INVALID_HANDLE_VALUE; // closed in divertClockLoop
     LOG("Successfully waited threads and stopped.");
 }

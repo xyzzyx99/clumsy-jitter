@@ -17,4 +17,8 @@ int paramsRegister(const char *name, Ihandle *control, ParamType type);
 int paramsSave(const char *path, char *error, size_t errorSize);
 int paramsLoad(const char *path, char *error, size_t errorSize);
 
+/* Silent persistence of last-used values in .clumsy.ini. */
+void paramsAutoLoad(void);
+void paramsAutoSave(void);
+
 #endif

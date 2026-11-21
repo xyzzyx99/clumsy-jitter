@@ -28,6 +28,7 @@ static Ihandle *filterText, *filterButton, *reapplyButton;
 static Ihandle *watchdogIcon;
 static BOOL watchdogWarned = FALSE;
 static BOOL filteringActive = FALSE;
+static BOOL sessionReady = FALSE; /* skip saving on failed launch/elevation */
 Ihandle *filterSelectList;
 // timer to update icons
 static Ihandle *stateIcon;
@@ -304,6 +305,9 @@ void init(int argc, char* argv[]) {
         IupSetCallback(timeout, "ACTION_CB", uiTimeoutCb);
         IupSetAttribute(timeout, "RUN", "YES");
     }
+
+    /* Restore only after all GUI settings are registered; preserve CLI overrides. */
+    if (!parameterized) paramsAutoLoad();
 }
 
 void startup() {
@@ -317,6 +321,9 @@ void startup() {
 }
 
 void cleanup() {
+    /* Every graceful exit path, including the program timeout, passes here.
+     * Do not overwrite preferences if this instance did not finish startup. */
+    if (sessionReady && !parameterized) paramsAutoSave();
 
     IupDestroy(timer);
     if (timeout) {
@@ -448,6 +455,8 @@ static int uiOnDialogShow(Ihandle *ih, int state) {
 
     // try elevate and decides whether to exit
     exit = tryElevate(hWnd, parameterized);
+
+    if (!exit) sessionReady = TRUE;
 
     if (!exit && parameterized) {
         setFromParameter(filterText, "VALUE", "filter");

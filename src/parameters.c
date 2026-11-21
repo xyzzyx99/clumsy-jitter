@@ -354,3 +354,67 @@ int paramsLoad(const char *path, char *error, size_t errorSize)
     free(saved);
     return ok;
 }
+
+/* Automatic last-used settings. Never display errors or interrupt startup/exit.
+ * The executable directory always takes precedence over the user's home.
+ * Use the existing validated, atomic save/load routines for the file contents.
+ */
+#define AUTO_PARAMS_FILE ".clumsy.ini"
+
+static int paramsExecutablePath(char *path, size_t size)
+{
+    char executable[MAX_PATH];
+    char *slash, *backslash;
+    DWORD length = GetModuleFileNameA(NULL, executable, sizeof(executable));
+    size_t prefix;
+    if (!length || length >= sizeof(executable)) return 0;
+
+    slash = strrchr(executable, '/');
+    backslash = strrchr(executable, '\\');
+    if (!slash || (backslash && backslash > slash)) slash = backslash;
+    if (!slash) return 0;
+
+    prefix = (size_t)(slash - executable + 1);
+    if (prefix + sizeof(AUTO_PARAMS_FILE) > size) return 0;
+    memcpy(path, executable, prefix);
+    memcpy(path + prefix, AUTO_PARAMS_FILE, sizeof(AUTO_PARAMS_FILE));
+    return 1;
+}
+
+static int paramsHomePath(char *path, size_t size)
+{
+    char home[MAX_PATH];
+    DWORD length = GetEnvironmentVariableA("USERPROFILE", home, sizeof(home));
+    const char *separator;
+    int written;
+    if (!length || length >= sizeof(home)) return 0;
+    /* Avoid a double separator; accept both common Windows path styles. */
+    separator = (home[length - 1] == '\\' || home[length - 1] == '/') ? "" : "\\";
+    written = snprintf(path, size, "%s%s%s", home, separator, AUTO_PARAMS_FILE);
+    return written >= 0 && (size_t)written < size;
+}
+
+void paramsAutoLoad(void)
+{
+    char local[MAX_PATH];
+    char home[MAX_PATH];
+    /* If the local file is missing, unreadable or invalid, try home instead. */
+    if (paramsExecutablePath(local, sizeof(local)) && paramsLoad(local, NULL, 0))
+        return;
+    if (paramsHomePath(home, sizeof(home)) && paramsLoad(home, NULL, 0))
+        return;
+    /* Nothing to restore, or an invalid file: silently keep the defaults. */
+}
+
+void paramsAutoSave(void)
+{
+    char local[MAX_PATH];
+    char home[MAX_PATH];
+    /* Attempt a real atomic save: a permission probe alone can be misleading
+     * (e.g. when the existing .clumsy.ini itself is read-only). */
+    if (paramsExecutablePath(local, sizeof(local)) && paramsSave(local, NULL, 0))
+        return;
+    if (paramsHomePath(home, sizeof(home)))
+        (void)paramsSave(home, NULL, 0);
+    /* All failures are deliberately silent, including failure of both paths. */
+}

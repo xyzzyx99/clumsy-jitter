@@ -10,6 +10,17 @@ The saved file contains the current filter expression, the selected preset index
 
 Parameter files are separate from the existing `config.txt`, which defines the **Presets** dropdown; loading a parameter file does not replace or edit those definitions. The Save operation refuses the filename `config.txt` to avoid overwriting a presets file.
 
+### Automatic last-used settings (`.clumsy.ini`)
+
+On a normal GUI exit (File > Exit, window close, or an application timeout), Clumsy silently saves the current filter, selected preset, all checkbox states, and numeric fields to `.clumsy.ini`. When the application opens again, it silently restores those settings **without starting packet interception**. No overwrite prompts or error dialogs are displayed.
+
+- **Saving:** Try `.clumsy.ini` next to `clumsy.exe`. If writing fails (including a read-only target file), try `%USERPROFILE%\.clumsy.ini`. If both fail, do nothing.
+- **Loading:** Try the file next to `clumsy.exe` first. If it is missing, unreadable, or invalid, try `%USERPROFILE%\.clumsy.ini`. If neither file can be loaded, retain the usual defaults without warning.
+- **Precedence:** A valid `.clumsy.ini` next to the executable always takes priority over the copy in the home directory, even if the home copy is newer.
+- **CLI:** Command-line-driven sessions are not automatically loaded or saved, so scripted overrides do not replace GUI preferences. A failed/duplicate-instance launch also does not overwrite the preferences.
+- **Manual File menu:** The existing Load parameters ... and Save parameters ... commands still use a file picker and preserve their original error messages. They never automatically overwrite `.clumsy.ini` unless the user explicitly selects it.
+- **Network safety:** `.clumsy.ini` restores values only. Interception still starts manually, and no WinDivert driver change is necessary.
+
 ### When changes take effect
 
 - Checkbox and numeric values take effect immediately for newly processed packets, just like changes made manually in the GUI.

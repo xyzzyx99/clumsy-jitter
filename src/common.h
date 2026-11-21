@@ -161,6 +161,8 @@ void showStatus(const char* line);
 // WinDivert
 int divertStart(const char * filter, char buf[]);
 void divertStop();
+/* 0=stopped, 1=healthy, 2=failure. Thread-safe for UI polling. */
+int divertWatchdogHealth(void);
 
 // utils
 // STR to convert int macro to string

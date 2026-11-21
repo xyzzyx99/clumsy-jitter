@@ -10,14 +10,68 @@
 // FIXME does this need to be larger then the time to process the list?
 #define CLOCK_WAITMS 40
 #define QUEUE_LEN 2 << 10
-#define QUEUE_TIME 2 << 9 
+#define QUEUE_TIME 2 << 9
+
+/* Extension to our WinDivert driver, not stock WinDivert 2.2. */
+#define WD_PARAM_TIMEOUT ((WINDIVERT_PARAM)100)
+#define WD_PARAM_PING    ((WINDIVERT_PARAM)101)
+#define WD_PARAM_STATUS  ((WINDIVERT_PARAM)102)
+#define WD_HEARTBEAT_INTERVAL_MS 1000
+#define WD_TIMEOUT_MS 3000
+#define WD_WORKER_STALE_MS 2000
 
 static HANDLE divertHandle;
 static volatile short stopLooping;
 static HANDLE loopThread, clockThread, mutex;
+static HANDLE watchdogThread = NULL;
+static volatile LONG wdState = 0;       /* stopped=0, healthy=1, error=2 */
+static volatile LONG wdLastAck = 0;     /* GetTickCount, unsigned subtraction */
+static volatile LONG wdWorkerTick = 0;  /* Proven progress by packet clock */
 
 static DWORD divertReadLoop(LPVOID arg);
 static DWORD divertClockLoop(LPVOID arg);
+static DWORD WINAPI divertWatchdogLoop(LPVOID arg);
+
+int divertWatchdogHealth(void)
+{
+    LONG state = InterlockedCompareExchange(&wdState, 0, 0);
+    DWORD ack = (DWORD)InterlockedCompareExchange(&wdLastAck, 0, 0);
+    if (state == 1 && (DWORD)(GetTickCount() - ack) > WD_TIMEOUT_MS)
+        return 2;
+    return (int)state;
+}
+
+/* User-mode checks run independently of the UI.  A heartbeat acknowledges
+ * actual worker progress, not just a live but deadlocked GUI thread. */
+static DWORD WINAPI divertWatchdogLoop(LPVOID arg)
+{
+    int i;
+    UNREFERENCED_PARAMETER(arg);
+    while (!stopLooping)
+    {
+        DWORD now = GetTickCount();
+        DWORD workerTick = (DWORD)InterlockedCompareExchange(&wdWorkerTick, 0, 0);
+        UINT64 kernelState = 0;
+        if ((DWORD)(now - workerTick) > WD_WORKER_STALE_MS ||
+            !WinDivertSetParam(divertHandle, WD_PARAM_PING, 0) ||
+            !WinDivertGetParam(divertHandle, WD_PARAM_STATUS, &kernelState) ||
+            kernelState != 1)
+        {
+            if (!stopLooping)
+                InterlockedExchange(&wdState, 2);
+            return 0; /* No more pings; kernel lease expires independently. */
+        }
+        InterlockedExchange(&wdLastAck, (LONG)GetTickCount());
+        InterlockedExchange(&wdState, 1);
+        /* Short sleeps let Stop/Re-apply join promptly. */
+        for (i = 0; i < WD_HEARTBEAT_INTERVAL_MS / 100; ++i)
+        {
+            if (stopLooping) return 0;
+            Sleep(100);
+        }
+    }
+    return 0;
+}
 
 // not to put these in common.h since modules shouldn't see these
 extern PacketNode * const head;
@@ -93,6 +147,24 @@ int divertStart(const char *filter, char buf[]) {
     }
     LOG("Divert opened handle.");
 
+    /* Require the custom fail-open watchdog, don't silently run unprotected. */
+    {
+        UINT64 status = 0;
+        if (!WinDivertSetParam(divertHandle, WD_PARAM_TIMEOUT, WD_TIMEOUT_MS) ||
+            !WinDivertGetParam(divertHandle, WD_PARAM_STATUS, &status) || status != 1)
+        {
+            sprintf(buf, "WinDivert watchdog unsupported or unavailable (code:%lu). "
+                "Use the patched, test-signed WinDivert64.sys.", GetLastError());
+            WinDivertClose(divertHandle);
+            divertHandle = INVALID_HANDLE_VALUE;
+            InterlockedExchange(&wdState, 0);
+            return FALSE;
+        }
+        InterlockedExchange(&wdLastAck, (LONG)GetTickCount());
+        InterlockedExchange(&wdWorkerTick, (LONG)GetTickCount());
+        InterlockedExchange(&wdState, 1);
+    }
+
     WinDivertSetParam(divertHandle, WINDIVERT_PARAM_QUEUE_LENGTH, QUEUE_LEN);
     WinDivertSetParam(divertHandle, WINDIVERT_PARAM_QUEUE_TIME, QUEUE_TIME);
     LOG("WinDivert internal queue Len: %d, queue time: %d", QUEUE_LEN, QUEUE_TIME);
@@ -139,8 +211,14 @@ int divertStart(const char *filter, char buf[]) {
         return FALSE;
     }
 
-    LOG("Threads created");
-
+    watchdogThread = CreateThread(NULL, 0, divertWatchdogLoop, NULL, 0, NULL);
+    if (watchdogThread == NULL)
+    {
+        sprintf(buf, "Failed to create watchdog thread (%lu)", GetLastError());
+        divertStop();
+        return FALSE;
+    }
+    LOG("Threads and watchdog created");
     return TRUE;
 }
 
@@ -270,6 +348,7 @@ static DWORD divertClockLoop(LPVOID arg) {
                     LOG("Fatal: Failed to release mutex (%lu)", GetLastError());
                     ABORT();
                 }
+                InterlockedExchange(&wdWorkerTick, (LONG)GetTickCount());
                 // if didn't spent enough time, we sleep on it
                 stepTick = GetTickCount() - startTick;
                 if (stepTick < CLOCK_WAITMS) {
@@ -383,6 +462,7 @@ static DWORD divertReadLoop(LPVOID arg) {
                     LOG("Fatal: Failed to release mutex (%lu)", GetLastError());
                     ABORT();
                 }
+                InterlockedExchange(&wdWorkerTick, (LONG)GetTickCount());
                 break;
             case WAIT_TIMEOUT:
                 LOG("Acquire timeout, dropping one read packet");
@@ -405,6 +485,13 @@ void divertStop() {
 
     LOG("Stopping...");
     InterlockedIncrement16(&stopLooping);
+    /* Stop heartbeats first; clock worker then flushes and closes WinDivert. */
+    if (watchdogThread != NULL)
+    {
+        WaitForSingleObject(watchdogThread, INFINITE);
+        CloseHandle(watchdogThread);
+        watchdogThread = NULL;
+    }
     if (WaitForMultipleObjects(2, threads, TRUE, INFINITE) != WAIT_OBJECT_0) {
         LOG("Unable to wait for packet threads (%lu)", GetLastError());
         ABORT();
@@ -420,5 +507,6 @@ void divertStop() {
     clockThread = NULL;
     mutex = NULL;
     divertHandle = INVALID_HANDLE_VALUE; // closed in divertClockLoop
+    InterlockedExchange(&wdState, 0);
     LOG("Successfully waited threads and stopped.");
 }

@@ -24,6 +24,8 @@ volatile short sendState = SEND_STATUS_NONE;
 static Ihandle *dialog, *topFrame, *bottomFrame; 
 static Ihandle *statusLabel;
 static Ihandle *filterText, *filterButton, *reapplyButton;
+static Ihandle *watchdogIcon;
+static BOOL watchdogWarned = FALSE;
 static BOOL filteringActive = FALSE;
 Ihandle *filterSelectList;
 // timer to update icons
@@ -125,6 +127,7 @@ void init(int argc, char* argv[]) {
     UINT ix;
     Ihandle *topVbox, *bottomVbox, *dialogVBox, *controlHbox;
     Ihandle *noneIcon, *doingIcon, *errorIcon;
+    Ihandle *watchdogGrey, *watchdogGreen, *watchdogRed;
     char* arg_value = NULL;
 
     // fill in config
@@ -146,6 +149,7 @@ void init(int argc, char* argv[]) {
                 stateIcon = IupLabel(NULL),
                 filterButton = IupButton("Start", NULL),
                 reapplyButton = IupButton("Re-apply", NULL),
+                watchdogIcon = IupLabel(NULL),
                 IupFill(),
                 IupLabel("Presets:  "),
                 filterSelectList = IupList(NULL),
@@ -184,6 +188,9 @@ void init(int argc, char* argv[]) {
     // setup state icon
     IupSetAttribute(stateIcon, "IMAGE", "none_icon");
     IupSetAttribute(stateIcon, "PADDING", "4x");
+    IupSetAttribute(watchdogIcon, "IMAGE", "watchdog_grey");
+    IupSetAttribute(watchdogIcon, "PADDING", "4x");
+    IupSetAttribute(watchdogIcon, "TIP", "WinDivert stopped");
 
     // fill in options and setup callback
     IupSetAttribute(filterSelectList, "VISIBLECOLUMNS", "24");
@@ -221,6 +228,19 @@ void init(int argc, char* argv[]) {
     IupSetHandle("none_icon", noneIcon);
     IupSetHandle("doing_icon", doingIcon);
     IupSetHandle("error_icon", errorIcon);
+    /* Separate small indicator; existing traffic activity icon is unchanged. */
+    watchdogGrey = IupImage(8, 8, icon8x8);
+    watchdogGreen = IupImage(8, 8, icon8x8);
+    watchdogRed = IupImage(8, 8, icon8x8);
+    IupSetAttribute(watchdogGrey, "0", "BGCOLOR");
+    IupSetAttribute(watchdogGreen, "0", "BGCOLOR");
+    IupSetAttribute(watchdogRed, "0", "BGCOLOR");
+    IupSetAttribute(watchdogGrey, "1", "150 150 150");
+    IupSetAttribute(watchdogGreen, "1", "60 166 80");
+    IupSetAttribute(watchdogRed, "1", "210 68 68");
+    IupSetHandle("watchdog_grey", watchdogGrey);
+    IupSetHandle("watchdog_green", watchdogGreen);
+    IupSetHandle("watchdog_red", watchdogRed);
 
     // setup module uis
     for (ix = 0; ix < MODULE_CNT; ++ix) {
@@ -370,12 +390,17 @@ static int uiStartCb(Ihandle *ih) {
     if (divertStart(IupGetAttribute(filterText, "VALUE"), buf) == 0) {
         filteringActive = FALSE;
         IupSetAttribute(reapplyButton, "ACTIVE", "NO");
+        IupSetAttribute(watchdogIcon, "IMAGE", "watchdog_grey");
+        IupSetAttribute(watchdogIcon, "TIP", "WinDivert stopped");
         showStatus(buf);
         return IUP_DEFAULT;
     }
 
     // successfully started: the filter remains editable, and Re-apply commits edits.
     filteringActive = TRUE;
+    watchdogWarned = FALSE;
+    IupSetAttribute(watchdogIcon, "IMAGE", "watchdog_green");
+    IupSetAttribute(watchdogIcon, "TIP", "WinDivert watchdog healthy");
     showStatus("Started filtering. Changes to the filter take effect after Re-apply.");
     IupSetAttribute(filterButton, "TITLE", "Stop");
     IupSetAttribute(reapplyButton, "ACTIVE", "YES");
@@ -396,6 +421,9 @@ static int uiStopCb(Ihandle *ih) {
     IupFlush(); // flush to show disabled state
     divertStop();
     filteringActive = FALSE;
+    watchdogWarned = FALSE;
+    IupSetAttribute(watchdogIcon, "IMAGE", "watchdog_grey");
+    IupSetAttribute(watchdogIcon, "TIP", "WinDivert stopped");
 
     IupSetAttribute(filterText, "ACTIVE", "YES");
     IupSetAttribute(filterButton, "TITLE", "Start");
@@ -450,6 +478,21 @@ static int uiToggleControls(Ihandle *ih, int state) {
 static int uiTimerCb(Ihandle *ih) {
     int ix;
     UNREFERENCED_PARAMETER(ih);
+    if (filteringActive) {
+        int health = divertWatchdogHealth();
+        if (health == 2) {
+            IupSetAttribute(watchdogIcon, "IMAGE", "watchdog_red");
+            IupSetAttribute(watchdogIcon, "TIP", "WinDivert watchdog failed; re-apply to recover");
+            if (!watchdogWarned) {
+                watchdogWarned = TRUE;
+                showStatus("WARNING: WinDivert heartbeat or packet worker stalled. "
+                           "Interception will fail open. Click Re-apply to recover.");
+            }
+        } else if (health == 1) {
+            IupSetAttribute(watchdogIcon, "IMAGE", "watchdog_green");
+            IupSetAttribute(watchdogIcon, "TIP", "WinDivert watchdog healthy");
+        }
+    }
     for (ix = 0; ix < MODULE_CNT; ++ix) {
         if (modules[ix]->processTriggered) {
             IupSetAttribute(modules[ix]->iconHandle, "IMAGE", "doing_icon");

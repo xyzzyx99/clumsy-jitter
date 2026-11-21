@@ -1,0 +1,132 @@
+name: Build clumsy-jitter (Optimized + Watchdog)
+
+on:
+  workflow_dispatch:
+    inputs:
+      enable_avx2:
+        description: 'Use AVX2 code generation for x64 (requires AVX2 CPU)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Optimized Release ${{ matrix.platform }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x64
+            dependency_arch: x64
+            iup_arch: Win64
+            driver: WinDivert64.sys
+
+    steps:
+      - name: Check out clumsy-jitter
+        uses: actions/checkout@v4
+
+      - name: Set up MSBuild (Visual Studio 2022)
+        uses: microsoft/setup-msbuild@v2
+
+      # Build-time WinDivert 2.2 DLL is ABI-compatible with our watchdog extension:
+      # WinDivertSetParam/GetParam already forward custom parameter codes. The
+      # driver binary from upstream is deliberately NOT shipped in our artifact.
+      - name: Supply upstream binary dependencies if missing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $needed = @(
+            'external/WinDivert-2.2.0-A/include/WinDivert.h',
+            'external/WinDivert-2.2.0-A/${{ matrix.dependency_arch }}/WinDivert.lib',
+            'external/WinDivert-2.2.0-A/${{ matrix.dependency_arch }}/WinDivert.dll',
+            'external/WinDivert-2.2.0-A/${{ matrix.dependency_arch }}/${{ matrix.driver }}',
+            'external/iup-3.30_${{ matrix.iup_arch }}_dll16_lib/include/iup.h',
+            'external/iup-3.30_${{ matrix.iup_arch }}_dll16_lib/iup.dll'
+          )
+          $missing = @($needed | Where-Object { -not (Test-Path -LiteralPath $_) })
+          if ($missing.Count -gt 0) {
+            Write-Host 'Fetching missing binary dependencies from jagt/clumsy...'
+            & git clone --depth 1 --filter=blob:none --sparse https://github.com/jagt/clumsy.git _clumsy_upstream
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to clone dependency source' }
+            & git -C _clumsy_upstream sparse-checkout set `
+                external/WinDivert-2.2.0-A `
+                external/iup-3.30_${{ matrix.iup_arch }}_dll16_lib
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to sparse-checkout dependencies' }
+            New-Item -ItemType Directory -Force external | Out-Null
+            Copy-Item -Path '_clumsy_upstream/external/WinDivert-2.2.0-A' -Destination 'external/' -Recurse -Force
+            Copy-Item -Path '_clumsy_upstream/external/iup-3.30_${{ matrix.iup_arch }}_dll16_lib' -Destination 'external/' -Recurse -Force
+          }
+          foreach ($file in $needed) {
+            if (-not (Test-Path -LiteralPath $file)) { throw "Missing build dependency: $file" }
+          }
+
+      - name: Download pinned GENie generator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://raw.githubusercontent.com/bkaradzic/bx/51f25ba638b9cb35eb2ac078f842a4bed0746d56/tools/bin/windows/genie.exe'
+          New-Item -ItemType Directory -Force -Path tools | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile tools/genie.exe
+          if (-not (Test-Path tools/genie.exe) -or (Get-Item tools/genie.exe).Length -lt 100000) {
+            throw 'GENie executable unavailable or unexpectedly small'
+          }
+
+      - name: Generate optimized Visual Studio project
+        shell: pwsh
+        env:
+          CLUMSY_OPTIMIZED: '1'
+          CLUMSY_AVX2: ${{ inputs.enable_avx2 && '1' || '0' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\genie.exe vs2015
+          if ($LASTEXITCODE -ne 0) { throw "GENie failed: $LASTEXITCODE" }
+          if (-not (Test-Path build/clumsy.sln)) { throw 'Generated solution missing' }
+          $project = Get-Content build/clumsy.vcxproj -Raw
+          if ($project -notmatch '/GL' -or $project -notmatch '/LTCG') {
+            throw 'Expected Release whole-program and link-time optimization switches not found'
+          }
+
+      - name: Build optimized Release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & msbuild build/clumsy.sln /m /t:Rebuild `
+              /p:Configuration=Release `
+              /p:Platform=${{ matrix.platform }} `
+              /p:PlatformToolset=v143 `
+              /p:WindowsTargetPlatformVersion=10.0 `
+              /verbosity:minimal
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) { throw "MSBuild failed: $buildExitCode" }
+
+      - name: Package portable optimized build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'bin/vs/Release/${{ matrix.platform }}'
+          $name = 'clumsy-jitter-watchdog-${{ matrix.platform }}'
+          $dest = Join-Path dist $name
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          foreach ($file in @('clumsy.exe', 'WinDivert.dll', 'iup.dll', 'config.txt')) {
+            $src = Join-Path $source $file
+            if (-not (Test-Path -LiteralPath $src)) { throw "Missing packaged file: $src" }
+            Copy-Item -LiteralPath $src -Destination $dest
+          }
+          Copy-Item LICENSE (Join-Path $dest LICENSE.txt)
+          Copy-Item README.md $dest
+          Copy-Item README-optimized.md $dest
+          Copy-Item README-watchdog.md $dest
+          Write-Warning 'This build intentionally omits WinDivert64.sys. Install your patched, test-signed driver from the WinDivert workflow before launching.'
+          Compress-Archive -Path (Join-Path $dest '*') -DestinationPath "dist/$name.zip" -CompressionLevel Optimal -Force
+          Get-ChildItem $dest | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Upload optimized build
+        uses: actions/upload-artifact@v4
+        with:
+          name: clumsy-jitter-watchdog-${{ matrix.platform }}
+          path: dist/clumsy-jitter-optimized-${{ matrix.platform }}.zip
+          if-no-files-found: error
+          retention-days: 30

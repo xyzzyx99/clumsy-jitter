@@ -1,4 +1,7 @@
 CLUMSY_ICON ICON "clumsy-icon.ico"  /* the first icon will also defines the executable icon in Explorer */
+CLUMSY_MENU_LOAD ICON "menu-load.ico"
+CLUMSY_MENU_SAVE ICON "menu-save.ico"
+CLUMSY_MENU_EXIT ICON "menu-exit.ico"
 
 /****************************************************/
 /* Used by IupFileDlg when SHOWPREVIEW=Yes */

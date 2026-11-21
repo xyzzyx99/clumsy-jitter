@@ -275,6 +275,9 @@ void init(int argc, char* argv[]) {
     loadItem = IupItem("Load parameters ...", NULL);
     saveItem = IupItem("Save parameters ...", NULL);
     exitItem = IupItem("Exit", NULL);
+    IupSetAttribute(loadItem, "IMAGE", "CLUMSY_MENU_LOAD");
+    IupSetAttribute(saveItem, "IMAGE", "CLUMSY_MENU_SAVE");
+    IupSetAttribute(exitItem, "IMAGE", "CLUMSY_MENU_EXIT");
     IupSetCallback(loadItem, "ACTION", uiLoadParametersCb);
     IupSetCallback(saveItem, "ACTION", uiSaveParametersCb);
     IupSetCallback(exitItem, "ACTION", uiExitCb);

@@ -2,6 +2,7 @@
 #include "iup.h"
 #include "windivert.h"
 #include "common.h"
+#include "parameters.h"
 #define NAME "tamper"
 
 static Ihandle *inboundCheckbox, *outboundCheckbox, *chanceInput, *checksumCheckbox;
@@ -45,6 +46,12 @@ static Ihandle* tamperSetupUI() {
         setFromParameter(chanceInput, "VALUE", NAME"-chance");
         setFromParameter(checksumCheckbox, "VALUE", NAME"-checksum");
     }
+
+    /* Persistent, stable names for every user-editable control. */
+    paramsRegister("tamper.redo_checksum", checksumCheckbox, PARAM_TOGGLE);
+    paramsRegister("tamper.inbound", inboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("tamper.outbound", outboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("tamper.chance", chanceInput, PARAM_NUMBER);
 
     return dupControlsBox;
 }

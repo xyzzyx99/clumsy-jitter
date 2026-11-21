@@ -3,6 +3,7 @@
 #include <Windows.h>
 #include "iup.h"
 #include "common.h"
+#include "parameters.h"
 #define NAME "drop"
 
 static Ihandle *inboundCheckbox, *outboundCheckbox, *chanceInput;
@@ -39,6 +40,11 @@ static Ihandle* dropSetupUI() {
         setFromParameter(outboundCheckbox, "VALUE", NAME"-outbound");
         setFromParameter(chanceInput, "VALUE", NAME"-chance");
     }
+
+    /* Persistent, stable names for every user-editable control. */
+    paramsRegister("drop.inbound", inboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("drop.outbound", outboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("drop.chance", chanceInput, PARAM_NUMBER);
 
     return dropControlsBox;
 }

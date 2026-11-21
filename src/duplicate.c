@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "iup.h"
 #include "common.h"
+#include "parameters.h"
 #define NAME "duplicate"
 #define COPIES_MIN "2"
 #define COPIES_MAX "50"
@@ -51,6 +52,12 @@ static Ihandle* dupSetupUI() {
         setFromParameter(chanceInput, "VALUE", NAME"-chance");
         setFromParameter(countInput, "VALUE", NAME"-count");
     }
+
+    /* Persistent, stable names for every user-editable control. */
+    paramsRegister("duplicate.count", countInput, PARAM_NUMBER);
+    paramsRegister("duplicate.inbound", inboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("duplicate.outbound", outboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("duplicate.chance", chanceInput, PARAM_NUMBER);
 
     return dupControlsBox;
 }

@@ -1,6 +1,7 @@
 // lagging packets
 #include "iup.h"
 #include "common.h"
+#include "parameters.h"
 #define NAME "lag"
 
 #define LAG_MIN "0"
@@ -82,6 +83,12 @@ static Ihandle *lagSetupUI() {
         jitterControlsBox,
         NULL
     );
+
+    /* Persistent, stable names for every user-editable control. */
+    paramsRegister("lag.inbound", inboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("lag.outbound", outboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("lag.delay", timeInput, PARAM_NUMBER);
+    paramsRegister("lag.jitter", jitterInput, PARAM_NUMBER);
 
     return lagOuterBox;
 }

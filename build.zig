@@ -97,6 +97,7 @@ pub fn build(b: *std.Build) void {
     exe.addCSourceFile(.{ .file = b.path("src/main.c"), .flags = &.{""} });
     exe.addCSourceFile(.{ .file = b.path("src/ood.c"), .flags = &.{""} });
     exe.addCSourceFile(.{ .file = b.path("src/packet.c"), .flags = &.{""} });
+    exe.addCSourceFile(.{ .file = b.path("src/parameters.c"), .flags = &.{""} });
     exe.addCSourceFile(.{ .file = b.path("src/reset.c"), .flags = &.{""} });
     exe.addCSourceFile(.{ .file = b.path("src/tamper.c"), .flags = &.{""} });
     exe.addCSourceFile(.{ .file = b.path("src/throttle.c"), .flags = &.{""} });

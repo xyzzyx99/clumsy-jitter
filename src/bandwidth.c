@@ -5,6 +5,7 @@
 
 #include "iup.h"
 #include "common.h"
+#include "parameters.h"
 
 #define NAME "bandwidth"
 #define BANDWIDTH_MIN  "0"
@@ -81,6 +82,11 @@ static Ihandle* bandwidthSetupUI() {
         setFromParameter(outboundCheckbox, "VALUE", NAME"-outbound");
         setFromParameter(bandwidthInput, "VALUE", NAME"-bandwidth");
     }
+
+    /* Persistent, stable names for every user-editable control. */
+    paramsRegister("bandwidth.inbound", inboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("bandwidth.outbound", outboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("bandwidth.limit", bandwidthInput, PARAM_NUMBER);
 
     return bandwidthControlsBox;
 }

@@ -5,6 +5,7 @@
 #include <Windows.h>
 #include "iup.h"
 #include "common.h"
+#include "parameters.h"
 
 // ! the order decides which module get processed first
 Module* modules[MODULE_CNT] = {
@@ -38,6 +39,9 @@ static int uiOnDialogShow(Ihandle *ih, int state);
 static int uiStopCb(Ihandle *ih);
 static int uiStartCb(Ihandle *ih);
 static int uiReapplyCb(Ihandle *ih);
+static int uiLoadParametersCb(Ihandle *ih);
+static int uiSaveParametersCb(Ihandle *ih);
+static int uiExitCb(Ihandle *ih);
 static int uiTimerCb(Ihandle *ih);
 static int uiTimeoutCb(Ihandle *ih);
 static int uiListSelectCb(Ihandle *ih, char *text, int item, int state);
@@ -128,6 +132,7 @@ void init(int argc, char* argv[]) {
     Ihandle *topVbox, *bottomVbox, *dialogVBox, *controlHbox;
     Ihandle *noneIcon, *doingIcon, *errorIcon;
     Ihandle *watchdogGrey, *watchdogGreen, *watchdogRed;
+    Ihandle *fileMenu, *menuBar, *loadItem, *saveItem, *exitItem;
     char* arg_value = NULL;
 
     // fill in config
@@ -175,6 +180,7 @@ void init(int argc, char* argv[]) {
     IupSetAttribute(topFrame, "EXPAND", "HORIZONTAL");
     IupSetAttribute(filterText, "EXPAND", "HORIZONTAL");
     IupSetCallback(filterText, "VALUECHANGED_CB", (Icallback)uiFilterTextCb);
+    paramsRegister("filter", filterText, PARAM_FILTER);
     IupSetAttribute(filterButton, "PADDING", "8x");
     IupSetCallback(filterButton, "ACTION", uiStartCb);
     IupSetAttribute(reapplyButton, "PADDING", "8x");
@@ -202,6 +208,7 @@ void init(int argc, char* argv[]) {
     }
     IupSetAttribute(filterSelectList, "VALUE", "1");
     IupSetCallback(filterSelectList, "ACTION", (Icallback)uiListSelectCb);
+    paramsRegister("preset", filterSelectList, PARAM_PRESET);
     // set filter text value since the callback won't take effect before main loop starts
     IupSetAttribute(filterText, "VALUE", filters[0].filterValue);
 
@@ -261,6 +268,18 @@ void init(int argc, char* argv[]) {
     IupSetAttribute(dialog, "SIZE", "480x"); // add padding manually to width
     IupSetAttribute(dialog, "RESIZE", "NO");
     IupSetCallback(dialog, "SHOW_CB", (Icallback)uiOnDialogShow);
+    IupSetCallback(dialog, "CLOSE_CB", uiExitCb);
+
+    /* File menu is separate from config.txt (filter preset definitions). */
+    loadItem = IupItem("Load parameters ...", NULL);
+    saveItem = IupItem("Save parameters ...", NULL);
+    exitItem = IupItem("Exit", NULL);
+    IupSetCallback(loadItem, "ACTION", uiLoadParametersCb);
+    IupSetCallback(saveItem, "ACTION", uiSaveParametersCb);
+    IupSetCallback(exitItem, "ACTION", uiExitCb);
+    fileMenu = IupMenu(loadItem, saveItem, IupSeparator(), exitItem, NULL);
+    menuBar = IupMenu(IupSubmenu("File", fileMenu), NULL);
+    IupSetAttributeHandle(dialog, "MENU", menuBar);
 
 
     // global layout settings to affect childrens
@@ -306,6 +325,61 @@ void cleanup() {
 
     IupClose();
     endTimePeriod(); // try close if not closing
+}
+
+// Parameter files store filter text, every module checkbox and all numeric values.
+// Clumsy's existing config.txt is reserved for named filter presets.
+static int uiParameterFileCb(int saving)
+{
+    Ihandle *chooser = IupFileDlg();
+    char message[256];
+    const char *path;
+    int succeeded;
+    IupSetAttribute(chooser, "DIALOGTYPE", saving ? "SAVE" : "OPEN");
+    IupSetAttribute(chooser, "TITLE", saving ? "Save Clumsy parameters" : "Load Clumsy parameters");
+    IupSetAttribute(chooser, "EXTFILTER", "Clumsy parameters (*.ini)|*.ini|All files (*.*)|*.*|");
+    IupSetAttribute(chooser, "EXTDEFAULT", "ini");
+    if (saving) IupSetAttribute(chooser, "FILE", "clumsy-parameters.ini");
+    IupSetAttribute(chooser, "NOCHANGEDIR", "YES");
+    IupSetAttributeHandle(chooser, "PARENTDIALOG", dialog);
+    IupPopup(chooser, IUP_CENTERPARENT, IUP_CENTERPARENT);
+    if (IupGetInt(chooser, "STATUS") < 0) {
+        IupDestroy(chooser);
+        return IUP_DEFAULT;
+    }
+    path = IupGetAttribute(chooser, "VALUE");
+    succeeded = saving ? paramsSave(path, message, sizeof(message))
+                       : paramsLoad(path, message, sizeof(message));
+    if (!succeeded) {
+        IupMessage(saving ? "Save parameters" : "Load parameters", message);
+    } else if (saving) {
+        showStatus("Parameters saved.");
+    } else {
+        showStatus(filteringActive
+            ? "Parameters loaded. The new filter takes effect after Re-apply."
+            : "Parameters loaded.");
+    }
+    IupDestroy(chooser);
+    return IUP_DEFAULT;
+}
+
+static int uiLoadParametersCb(Ihandle *ih)
+{
+    UNREFERENCED_PARAMETER(ih);
+    return uiParameterFileCb(0);
+}
+
+static int uiSaveParametersCb(Ihandle *ih)
+{
+    UNREFERENCED_PARAMETER(ih);
+    return uiParameterFileCb(1);
+}
+
+static int uiExitCb(Ihandle *ih)
+{
+    UNREFERENCED_PARAMETER(ih);
+    if (filteringActive) uiStopCb(filterButton);
+    return IUP_CLOSE;
 }
 
 // ui logics
@@ -544,6 +618,7 @@ static int uiFilterTextCb(Ihandle *ih)  {
 
 static void uiSetupModule(Module *module, Ihandle *parent) {
     Ihandle *groupBox, *toggle, *controls, *icon;
+    char settingKey[64];
     groupBox = IupHbox(
         icon = IupLabel(NULL),
         toggle = IupToggle(module->displayName, NULL),
@@ -560,6 +635,8 @@ static void uiSetupModule(Module *module, Ihandle *parent) {
     IupSetCallback(toggle, "ACTION", (Icallback)uiToggleControls);
     IupSetAttribute(toggle, CONTROLS_HANDLE, (char*)controls);
     IupSetAttribute(toggle, SYNCED_VALUE, (char*)module->enabledFlag);
+    snprintf(settingKey, sizeof(settingKey), "%s.enabled", module->shortName);
+    paramsRegister(settingKey, toggle, PARAM_MODULE);
     IupSetAttribute(controls, "ACTIVE", "NO"); // startup as inactive
     IupSetAttribute(controls, "NCGAP", "4"); // startup as inactive
 

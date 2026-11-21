@@ -1,6 +1,7 @@
 // throttling packets
 #include "iup.h"
 #include "common.h"
+#include "parameters.h"
 #define NAME "throttle"
 #define TIME_MIN "0"
 #define TIME_MAX "1000"
@@ -70,6 +71,13 @@ static Ihandle *throttleSetupUI() {
         setFromParameter(chanceInput, "VALUE", NAME"-chance");
         setFromParameter(frameInput, "VALUE", NAME"-frame");
     }
+
+    /* Persistent, stable names for every user-editable control. */
+    paramsRegister("throttle.drop_throttled", dropThrottledCheckbox, PARAM_TOGGLE);
+    paramsRegister("throttle.timeframe", frameInput, PARAM_NUMBER);
+    paramsRegister("throttle.inbound", inboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("throttle.outbound", outboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("throttle.chance", chanceInput, PARAM_NUMBER);
 
     return throttleControlsBox;
 }

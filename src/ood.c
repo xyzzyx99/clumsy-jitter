@@ -1,6 +1,7 @@
 // out of order arrange packets module
 #include "iup.h"
 #include "common.h"
+#include "parameters.h"
 #define NAME "ood"
 // keep a picked packet at most for KEEP_TURNS_MAX steps, or if there's no following
 // one, it will just be sent
@@ -41,6 +42,11 @@ static Ihandle *oodSetupUI() {
         setFromParameter(outboundCheckbox, "VALUE", NAME"-outbound");
         setFromParameter(chanceInput, "VALUE", NAME"-chance");
     }
+
+    /* Persistent, stable names for every user-editable control. */
+    paramsRegister("ood.inbound", inboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("ood.outbound", outboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("ood.chance", chanceInput, PARAM_NUMBER);
 
     return oodControlsBox;
 }

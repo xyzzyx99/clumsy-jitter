@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "iup.h"
 #include "common.h"
+#include "parameters.h"
 #define NAME "reset"
 
 static const unsigned int TCP_MIN_SIZE = sizeof(WINDIVERT_IPHDR) + sizeof(WINDIVERT_TCPHDR);
@@ -56,6 +57,11 @@ static Ihandle* resetSetupUI() {
         setFromParameter(outboundCheckbox, "VALUE", NAME"-outbound");
         setFromParameter(chanceInput, "VALUE", NAME"-chance");
     }
+
+    /* Persistent, stable names for every user-editable control. */
+    paramsRegister("reset.inbound", inboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("reset.outbound", outboundCheckbox, PARAM_TOGGLE);
+    paramsRegister("reset.chance", chanceInput, PARAM_NUMBER);
 
     return dupControlsBox;
 }
